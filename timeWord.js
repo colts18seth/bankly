@@ -197,3 +197,5 @@ function timeWord(time) {
 
     return returnedTime
 }
+
+module.exports = timeWord
