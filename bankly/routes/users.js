@@ -3,8 +3,10 @@
 const User = require('../models/user');
 const express = require('express');
 const router = new express.Router();
+const jsonschema = require('jsonschema');
+const patchSchema = require('../schemas/patchSchema.json');
 const ExpressError = require('../helpers/expressError');
-const { authUser, requireLogin, requireAdmin } = require('../middleware/auth');
+const { authUser, requireLogin, requireAdmin, requireCurrentUserOrAdmin } = require('../middleware/auth');
 
 /** GET /
  *
@@ -15,13 +17,13 @@ const { authUser, requireLogin, requireAdmin } = require('../middleware/auth');
  *
  */
 
-router.get('/', authUser, requireLogin, async function(req, res, next) {
-  try {
-    let users = await User.getAll();
-    return res.json({ users });
-  } catch (err) {
-    return next(err);
-  }
+router.get('/', authUser, requireLogin, async function (req, res, next) {
+    try {
+        let users = await User.getAll();
+        return res.json({ users });
+    } catch (err) {
+        return next(err);
+    }
 }); // end
 
 /** GET /[username]
@@ -35,17 +37,17 @@ router.get('/', authUser, requireLogin, async function(req, res, next) {
  *
  */
 
-router.get('/:username', authUser, requireLogin, async function(
-  req,
-  res,
-  next
+router.get('/:username', authUser, requireLogin, async function (
+    req,
+    res,
+    next
 ) {
-  try {
-    let user = await User.get(req.params.username);
-    return res.json({ user });
-  } catch (err) {
-    return next(err);
-  }
+    try {
+        let user = await User.get(req.params.username);
+        return res.json({ user });
+    } catch (err) {
+        return next(err);
+    }
 });
 
 /** PATCH /[username]
@@ -63,25 +65,31 @@ router.get('/:username', authUser, requireLogin, async function(
  *
  */
 
-router.patch('/:username', authUser, requireLogin, requireAdmin, async function(
-  req,
-  res,
-  next
-) {
-  try {
-    if (!req.curr_admin && req.curr_username !== req.params.username) {
-      throw new ExpressError('Only  that user or admin can edit a user.', 401);
+router.patch('/:username', authUser, requireCurrentUserOrAdmin, async function (req, res, next) {
+    try {
+        // FIX #7 - limited patch request to only update certain properties
+        const result = jsonschema.validate(req.body, patchSchema);
+        if (!result.valid) {
+            let listOfErrors = result.errors.map(error => error.stack);
+            throw new ExpressError(listOfErrors, 401);
+        }
+
+        // FIX #5 - added .get to check if user exists 
+        await User.get(req.params.username);
+
+        if (!req.curr_admin && req.curr_username !== req.params.username) {
+            throw new ExpressError('Only that user or admin can edit a user.', 401);
+        }
+
+        // get fields to change; remove token so we don't try to change it
+        let fields = { ...req.body };
+        delete fields._token;
+
+        let user = await User.update(req.params.username, fields);
+        return res.json({ user });
+    } catch (err) {
+        return next(err);
     }
-
-    // get fields to change; remove token so we don't try to change it
-    let fields = { ...req.body };
-    delete fields._token;
-
-    let user = await User.update(req.params.username, fields);
-    return res.json({ user });
-  } catch (err) {
-    return next(err);
-  }
 }); // end
 
 /** DELETE /[username]
@@ -94,17 +102,18 @@ router.patch('/:username', authUser, requireLogin, requireAdmin, async function(
  * If user cannot be found, return a 404 err.
  */
 
-router.delete('/:username', authUser, requireAdmin, async function(
-  req,
-  res,
-  next
+router.delete('/:username', authUser, requireAdmin, async function (
+    req,
+    res,
+    next
 ) {
-  try {
-    User.delete(req.params.username);
-    return res.json({ message: 'deleted' });
-  } catch (err) {
-    return next(err);
-  }
+    try {
+        // FIX #6 - added await key word
+        await User.delete(req.params.username);
+        return res.json({ message: 'deleted' });
+    } catch (err) {
+        return next(err);
+    }
 }); // end
 
 module.exports = router;
